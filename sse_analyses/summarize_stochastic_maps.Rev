@@ -1,0 +1,10 @@
+
+# script to summarize sampled character histories as a tab-delimited file
+
+base_dir = ""
+
+psi = readTrees(base_dir + "data/onagraceae_final_map_trimmed.tree")[1]
+x = readAncestralStateTrace("output/stochastic_selfing1.log")
+
+summarizeCharacterMaps(x, psi, file="output/events.tsv", burnin=0.1)
+q()
