@@ -1,0 +1,399 @@
+
+# script to estimate chronogram of Onagraceae using UCLN model
+# and 5 node calibrations
+# with separate GTR+G for each partition
+
+# base directory
+base_dir = ""
+
+########## Read in data
+
+filenames = v("alignments/ITS.fasta", 
+              "alignments/matK.fasta",
+              "alignments/ndhF.fasta",
+              "alignments/pgiC.fasta",
+              "alignments/rbcL.fasta",
+              "alignments/rpl16.fasta",
+              "alignments/rps16.fasta",
+              "alignments/trnL.fasta")
+
+n_partitions = filenames.size()
+
+for (i in 1:n_partitions) {
+    data[i] = readDiscreteCharacterData(base_dir + filenames[i])
+    n_sites[i] <- data[i].nchar()
+}
+
+# get variables from alignments
+n_species = data[1].ntaxa()
+taxa = data[1].taxa()
+n_branches = 2 * n_species - 2
+
+# set up an index for our MCMC moves
+mi = 0
+
+
+
+########## substition models
+
+
+for (i in 1:n_partitions) {
+    
+    # specify the GTR+GAMMA substitution model for each partition 
+    
+    # use BEAST2 prior
+    ac[i] ~ dnGamma(0.05, 10.0)
+    ag[i] ~ dnGamma(0.05, 20.0)
+    at[i] ~ dnGamma(0.05, 10.0)
+    cg[i] ~ dnGamma(0.05, 10.0)
+    ct[i] <- 1.0
+    gt[i] ~ dnGamma(0.05, 10.0)
+    er[i] := simplex(ac[i], ag[i], at[i], cg[i], ct[i], gt[i])
+
+    ac[i].setValue(1.0)
+    ag[i].setValue(1.0)
+    at[i].setValue(1.0)
+    cg[i].setValue(1.0)
+    gt[i].setValue(1.0)
+
+    moves[++mi] = mvScale(ac[i], lambda=0.1, weight=5)
+    moves[++mi] = mvScale(ag[i], lambda=0.1, weight=5)
+    moves[++mi] = mvScale(at[i], lambda=0.1, weight=5)
+    moves[++mi] = mvScale(cg[i], lambda=0.1, weight=5)
+    moves[++mi] = mvScale(gt[i], lambda=0.1, weight=5)
+
+    sf_prior[i] <- v(1,1,1,1)
+    sf[i] ~ dnDirichlet(sf_prior[i])
+    moves[++mi] = mvSimplexElementScale(sf[i], alpha=0.1, weight=5)
+
+    # create a deterministic variable for the rate matrix
+    Q[i] := fnGTR(er[i],sf[i])
+
+    # add among site rate variation
+    alpha_prior[i] <- 1.0
+    alpha[i] ~ dnExponential( alpha_prior[i] )
+    gamma_rates[i] := fnDiscretizeGamma( alpha[i], alpha[i], 4, false )
+    moves[++mi] = mvScale(alpha[i], lambda=0.1, weight=5)
+
+}
+
+
+
+
+###### calibration points
+
+
+# Sytsma et al 2004 estimate Lythraceae/Onagraceae split to be ~93 Ma
+# but give it a relatively uninformative prior of 82.0-200 (from the oldest Lythrum/Peplis fossil)
+# or we'll try a normal centered around 93 Ma
+#root_time ~ dnUnif(82.0, 200.0)
+root_time ~ dnNormal(mean=93, sd=5.0)
+
+# add moves for root time
+moves[++mi] = mvSlide(root_time, delta=0.1, weight=5)
+
+# topology constraints for the internal node calibrations:
+
+# the oldest fossils in Lythracea are
+# Lythrum/Peplis 81.5 Ma (Graham 2013) 
+# Stem calibration.
+taxa_Lythraceae=["Adenaria_floribunda",
+        "Ammannia_baccifera",
+        "Ammannia_coccinea",
+        "Ammannia_latifolia",
+        "Ammannia_prieuriana",
+        "Ammannia_robusta",
+        "Capuronia_madagascariensis",
+        "Cuphea_appendiculata",
+        "Cuphea_carthagenensis",
+        "Cuphea_hyssopifolia",
+        "Cuphea_viscosissima",
+        "Decodon_verticillatus",
+        "Duabanga_grandiflora",
+        "Duabanga_moluccana",
+        "Galpinia_transvaalica",
+        "Heimia_montana",
+        "Heimia_myrtifolia",
+        "Heimia_salicifolia",
+        "Koehneria_madagascariensis",
+        "Lafoensia_acuminata",
+        "Lagerstroemia_indica",
+        "Lagerstroemia_parviflora",
+        "Lagerstroemia_speciosa",
+        "Lawsonia_inermis",
+        "Lythrum_borysthenicum",
+        "Lythrum_flagellare",
+        "Lythrum_hyssopifolia",
+        "Lythrum_junceum",
+        "Lythrum_maritimum",
+        "Lythrum_portula",
+        "Lythrum_salicaria",
+        "Nesaea_aspera",
+        "Pehria_compacta",
+        "Pemphis_acidula",
+        "Peplis_portula",
+        "Physocalymma_scaberrimum",
+        "Pleurophora_anomala",
+        "Punica_granatum",
+        "Rotala_indica",
+        "Rotala_ramosior",
+        "Rotala_rotundifolia",
+        "Sonneratia_alba",
+        "Sonneratia_apetala",
+        "Sonneratia_caseolaris",
+        "Sonneratia_ovata",
+        "Trapa_natans",
+        "Trapa_maximowiczii",
+        "Woodfordia_fruticosa"]
+clade_Lythraceae = clade(taxa=taxa_Lythraceae, age=82)
+
+k = 1
+for (i in 1:taxa.size()) {
+    found = false
+    for (j in 1:taxa_Lythraceae.size()) {
+        if (taxa[i].getSpeciesName() == taxa_Lythraceae[j]) {
+            found = true
+            break
+        }
+    }
+    if (!found) {
+        taxa_Onagraceae[k] = taxa[i].getSpeciesName()
+        k += 1
+    }
+}
+clade_Onagraceae = clade(taxa=taxa_Onagraceae, age=82)
+
+
+clade_Fuschia = clade("Fuchsia_andrei", "Fuchsia_arborescens", "Fuchsia_boliviana", "Fuchsia_bracelinae",
+   "Fuchsia_brevilobis", "Fuchsia_coccinea", "Fuchsia_colensoi", "Fuchsia_cylindracea", "Fuchsia_cyrtandroides", "Fuchsia_decussata", "Fuchsia_denticulata",
+      "Fuchsia_excorticata", "Fuchsia_fulgens", "Fuchsia_glazioviana", "Fuchsia_hartwegii", "Fuchsia_hatschbachii", "Fuchsia_inflata", "Fuchsia_insignis",
+         "Fuchsia_jimenezii", "Fuchsia_lycioides", "Fuchsia_macrostigma", "Fuchsia_magdalenae", "Fuchsia_magellanica", "Fuchsia_microphylla", "Fuchsia_nigricans",
+            "Fuchsia_pachyrrhiza", "Fuchsia_paniculata", "Fuchsia_pilaloensis", "Fuchsia_procumbens", "Fuchsia_regia", "Fuchsia_splendens", "Fuchsia_thymifolia",
+               "Fuchsia_triphylla", "Fuchsia_vargasiana", "Fuchsia_verrucosa", age=35)
+
+
+# Fuschia section Skinnera 23 Ma lognorm SD 1.0 offset 23 Lee et al, 2013
+# F. cyrtandroides, F. excorticata, and F. colensoi (section Skinnera). 
+# Stem calibration.
+clade_Skinnera = clade("Fuchsia_cyrtandroides", "Fuchsia_excorticata", "Fuchsia_colensoi", "Fuchsia_procumbens", age=25)
+
+
+# Circeae 12 Ma lognorm SD 1.0 Grimsoon et al. 2012. 
+# Stem calibration.
+clade_Circeae = clade("Circaea_alpina","Circaea_canadensis","Circaea_cordata","Circaea_erubescens",
+                        "Circaea_glabrescens","Circaea_lutetiana","Circaea_mollis","Circaea_repens", age=17)
+
+
+# Ludwigia broadly dated to Paleocene normal distribution mean 57.6 with SD 1.5 (Zhi-Chen et al., 2004) 
+# The ageof the Lizigou Formation has been considered as Late Palaeocene (59.2 - 56 Ma) based on palynological correlations (Sung& Tsao, 1976)
+# Song, Z. C., & Tsao, L. (1976). The Paleocene spores and pollen grains from the Fushun Coal Field, Northeast China. Acta Palaeontologica Sinica, 15(2), 147-164.
+# Stem calibration.
+clade_Ludwigia = clade("Ludwigia_adscendens","Ludwigia_alata","Ludwigia_arcuata","Ludwigia_brevipes","Ludwigia_glandulosa",
+                        "Ludwigia_grandiflora","Ludwigia_hyssopifolia","Ludwigia_inclinata","Ludwigia_lanceolata",
+                        "Ludwigia_nervosa","Ludwigia_octovalvis","Ludwigia_ovalis","Ludwigia_palustris",
+                        "Ludwigia_peploides","Ludwigia_peruviana","Ludwigia_polycarpa","Ludwigia_ravenii",
+                        "Ludwigia_repens","Ludwigia_sedoides","Ludwigia_spathulata","Ludwigia_sphaerocarpa",
+                        "Ludwigia_suffruticosa", age=57.6)
+
+
+# Epilobium and Chamerion 12 Ma lognormal SD 2.0 offset 12 Grimsoon et al. 2012 
+# Stem calibration.
+clade_Epilobium = clade("Chamerion_angustifolium","Chamerion_conspersum","Chamerion_dodonaei","Chamerion_latifolium",
+                        "Epilobium_alsinifolium","Epilobium_alsinoides","Epilobium_anagallidifolium","Epilobium_angustum",
+                        "Epilobium_arcticum","Epilobium_billardierianum","Epilobium_brachycarpum","Epilobium_brevipes",
+                        "Epilobium_brunnescens","Epilobium_canum","Epilobium_chionanthum","Epilobium_chlorifolium",
+                        "Epilobium_ciliatum","Epilobium_cleistogamum","Epilobium_coloratum","Epilobium_crassum",
+                        "Epilobium_cylindricum","Epilobium_davuricum","Epilobium_densiflorum","Epilobium_foliosum",
+                        "Epilobium_glabellum","Epilobium_gracilipes","Epilobium_gunnianum","Epilobium_hirsutum",
+                        "Epilobium_hirtigerum","Epilobium_hornemannii","Epilobium_insulare","Epilobium_komarovianum",
+                        "Epilobium_lactiflorum","Epilobium_lanceolatum","Epilobium_leptophyllum","Epilobium_luteum",
+                        "Epilobium_macropus","Epilobium_margaretiae","Epilobium_melanocaulon","Epilobium_microphyllum",
+                        "Epilobium_minutum","Epilobium_montanum","Epilobium_nerteroides","Epilobium_nevadense",
+                        "Epilobium_nummulariifolium","Epilobium_obcordatum","Epilobium_obscurum","Epilobium_pallidiflorum",
+                        "Epilobium_pallidum","Epilobium_palustre","Epilobium_parviflorum","Epilobium_pedunculare",
+                        "Epilobium_pernitens","Epilobium_porphyrium","Epilobium_pubens","Epilobium_pycnostachyum",
+                        "Epilobium_pygmaeum","Epilobium_rigidum","Epilobium_roseum","Epilobium_rostratum","Epilobium_rotundifolium",
+                        "Epilobium_septentrionale","Epilobium_sikkimense","Epilobium_siskiyouense","Epilobium_subdentatum",
+                        "Epilobium_suffruticosum","Epilobium_tasmanicum","Epilobium_tetragonum","Epilobium_torreyi","Epilobium_wilsonii", age=17)
+
+
+# load the constraints into a vector for the BDP model
+#constraints = v(clade_Lythraceae, clade_Onagraceae, clade_Fuschia, clade_Skinnera, clade_Ludwigia, clade_Epilobium, clade_Circeae)
+constraints = v(clade_Lythraceae, clade_Onagraceae, clade_Fuschia, clade_Skinnera, clade_Ludwigia, clade_Epilobium, clade_Circeae)
+
+
+
+
+####### tree model
+
+# set up the parameters for the constant rate birth-death process
+
+# Specify a prior on the diversification and relative extinction rate
+speciation ~ dnUnif(0, 200)
+speciation.setValue(1.0)
+relative_extinction ~ dnUnif(0, 1)
+relative_extinction.setValue(0.5)
+
+# make extinction a deterministic node
+extinction := speciation * relative_extinction
+
+moves[++mi] = mvSlide(speciation, delta=0.1, weight=3)
+moves[++mi] = mvScale(speciation, lambda=0.1, weight=3)
+moves[++mi] = mvSlide(relative_extinction, delta=0.1, weight=3)
+moves[++mi] = mvScale(relative_extinction, lambda=0.1, weight=3)
+
+# the probability of sampling species at the present:
+# the number of species in Onagraceae is ~650 and Lythraceae ~620
+# we have 340 tips in our sample. so rho = 340/1270 ~ 0.27
+
+# the time tree is a stochastic node modeled by the constant rate birth-death process 
+bdp = dnBDP(lambda=speciation, mu=extinction, rho=0.27, rootAge=abs(root_time), taxa=taxa)
+timetree ~ dnConstrainedTopology(treeDistribution=bdp, constraints)
+
+# add moves on the tree node times
+moves[++mi] = mvNodeTimeSlideUniform(timetree, weight=20)
+moves[++mi] = mvNodeTimeScale(timetree, lambda=0.1, weight=20)
+moves[++mi] = mvSubtreeScale(timetree, weight=20)
+
+# and moves for the tree topology
+moves[++mi] = mvNNI(timetree, weight=40)
+moves[++mi] = mvNarrow(timetree, weight=40)
+moves[++mi] = mvFNPR(timetree, weight=40)
+moves[++mi] = mvGPR(timetree, weight=40)
+
+
+
+
+##### set up the internal node calibrations on the timetree:
+
+# create a deterministic node for the stem age of the MRCA of all Fuschia section Skinnera
+tmrca_Skinnera := tmrca(timetree, clade_Skinnera, stemAge=TRUE)
+# create an additional deterministic node that is negative, representing time in the past
+negative_tmrca_Skinnera := -(tmrca_Skinnera)
+# the age of the fossil is a stochastic node that has a lognormal waiting time that is a function of the age of the calibration node
+# we will model this waiting time so that the fossil is mean 10 My younger than its ancestor, but could be ~ 0-30 My
+mean_ln_skin = 10
+sdv = 2.0
+mu = ln(mean_ln_skin) - ((sdv * sdv) * 0.5)
+# using these parameters we create a stochastic node for the fossil
+stem_Skinnera_fossil ~ dnLnorm(mu, sdv, offset=negative_tmrca_Skinnera)
+# then we clamp this node with the observed fossil specimen, treating the fossil like data
+fuschia_fossil_age = -23
+stem_Skinnera_fossil.clamp(fuschia_fossil_age)
+
+
+
+# Lythrum/Peplis 81.5 Ma (Graham 2013) oldest known fossils for Lythraceae
+# crown calibration given a mean of 20 Ma, sdv = 2.0
+tmrca_Lythraceae := tmrca(timetree, clade_Lythraceae)
+negative_tmrca_Lythraceae := -(tmrca_Lythraceae)
+
+mean_ln_lyth = 20
+mu_lyth = ln(mean_ln_lyth) - ((2.0 * 2.0) * 0.5)
+lythraceae_fossil ~ dnLnorm(mu_lyth, 2.0, offset=negative_tmrca_Lythraceae)
+
+lythraceae_fossil_age = -81.5
+lythraceae_fossil.clamp(lythraceae_fossil_age)
+
+
+
+# Ludwigia broadly dated to Paleocene normal distribution mean 57.6 with SD 1.5 (Zhi-Chen et al., 2004) STEM
+# The ageof the Lizigou Formation has been considered as Late Palaeocene (59.2 - 56 Ma) based on palynological correlations (Sung& Tsao, 1976)
+#Song, Z. C., & Tsao, L. (1976). The Paleocene spores and pollen grains from the Fushun Coal Field, Northeast China. Acta Palaeontologica Sinica, 15(2), 147-164.
+tmrca_Ludwigia := tmrca(timetree, clade_Ludwigia, stemAge=TRUE)
+negative_tmrca_Ludwigia := -(tmrca_Ludwigia)
+
+# mean 10 sdv = 2.0
+mu_lud = ln(10) - ((2.0 * 2.0) * 0.5)
+stem_ludwigia_fossil ~ dnLnorm(mu_lud, 2.0, offset=negative_tmrca_Ludwigia)
+stem_ludwigia_fossil.clamp(-57.6)
+
+
+
+# Epilobium and Chamerion 12 Ma lognormal SD 2.0 offset 12 Grimsoon et al. 2012 STEM
+tmrca_Epilobium := tmrca(timetree, clade_Epilobium, stemAge=TRUE)
+negative_tmrca_Epilobium := -(tmrca_Epilobium)
+
+# mean 10 sdv = 2.0
+mu_epil = ln(10) - ((2.0 * 2.0) * 0.5)
+stem_epilobium_fossil ~ dnLnorm(mu_epil, 2.0, offset=negative_tmrca_Epilobium)
+stem_epilobium_fossil.clamp(-12.0)
+
+
+
+# Circeae 12 Ma lognorm SD 1.0 Grimsoon et al. 2012 STEM
+tmrca_Circeae := tmrca(timetree, clade_Circeae, stemAge=TRUE)
+negative_tmrca_Circeae := -(tmrca_Circeae)
+
+# mean 10 sdv = 2.0
+mu_cir = ln(10) - ((2.0 * 2.0) * 0.5)
+stem_Circeae_fossil ~ dnLnorm(mu_cir, 2.0, offset=negative_tmrca_Circeae)
+stem_Circeae_fossil.clamp(-12.0)
+
+
+####### UCLN model on branch rates
+
+ucln_log_mean <- 0.0
+ucln_sigma <- 0.25
+
+# pull rates for each branch from lognormal
+for (j in 1:n_branches) {
+
+    branch_rates[j] ~ dnLnorm(ucln_log_mean, ucln_sigma)
+    moves[++mi] = mvSlide(branch_rates[j], delta=0.1, weight=60/n_branches)
+
+}
+
+mean_rt := mean(branch_rates)
+
+up_down_scale_tree = mvUpDownScale(lambda=0.1, weight=100)
+up_down_scale_tree.addVariable( timetree, TRUE )
+up_down_scale_tree.addVariable( root_time, TRUE )
+
+# base rates for each partition
+for (i in 1:n_partitions) {
+
+    base_rate[i] ~ dnExponential(10.0)
+    base_rate[i].setValue(1.0)
+    moves[++mi] = mvSlide(base_rate[i], delta=0.1, weight=20)
+    up_down_scale_tree.addVariable( base_rate[i], FALSE )
+
+    # the branch-rates used in the phylogenetic CTMC are a function of the UCLN branch rates and the base rate for this partition
+    branch_subrates[i] := branch_rates * base_rate[i]
+    
+
+    ### the full phylogenetic CTMC
+    seq[i] ~ dnPhyloCTMC(tree=timetree, Q=Q[i], branchRates=branch_subrates[i], nSites=n_sites[i], siteRates=gamma_rates[i], type="DNA")
+
+    ### attach the observed sequence data
+    seq[i].clamp(data[i])
+
+}
+moves[++mi] = up_down_scale_tree
+
+chain_num = 1
+run_num = 1
+
+# set the number of iterations in this chain segment
+n_iterations = 15000
+
+# set the number of iterations to sample from MCMC
+sample_freq = 10
+
+### finish model
+mymodel = model(timetree)
+
+### set up the monitors that will output parameter values to file and screen
+monitors[1] = mnFile(filename=base_dir + "output/" + chain_num + "-" + run_num + ".trees", printgen=sample_freq, timetree)
+monitors[2] = mnScreen(printgen=1, root_time, tmrca_Circeae, tmrca_Ludwigia, tmrca_Epilobium, tmrca_Lythraceae, tmrca_Skinnera)
+monitors[3] = mnModel(filename=base_dir + "output/" + chain_num + "-" + run_num + ".log", printgen=sample_freq)
+monitors[4] = mnFile(printgen=1, filename=base_dir + "output/screen" + chain_num + "-" + run_num + ".log", root_time, tmrca_Circeae, tmrca_Ludwigia, tmrca_Epilobium, tmrca_Lythraceae, tmrca_Skinnera)
+
+### workspace mcmc ###
+mymcmc = mcmc(mymodel, monitors, moves)
+
+### run the MCMC ###
+mymcmc.run(generations=n_iternations)
+
+q()
+
