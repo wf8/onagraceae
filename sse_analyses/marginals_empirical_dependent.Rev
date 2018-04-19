@@ -1,0 +1,135 @@
+#!/usr/bin/rb
+
+rep = 1
+seed(1)
+base_dir = ""
+sample_freq = 1
+
+# set my move index
+mvi = 1
+mni = 1
+
+# use the MAP tree
+psi <- readTrees(base_dir + "data/onagraceae_final_map_trimmed.tree")[1]
+
+# read in selfing data
+data <- readCharacterDataDelimited(base_dir + "data/selfing_data_complete.csv", stateLabels=2, type="NaturalNumbers", delimiter=",", headers=TRUE)
+
+# add unobserved hidden state
+data_exp <- data.expandCharacters( 2 )
+
+
+# expected num species at time t under constant birth-death is
+# E(N_t) = N_0 e^{rt}
+# therefore net diversification r is
+# r = ( ln N_t - ln N_0 ) / t
+# we use r as the mean for the speciation prior
+taxa <- psi.taxa()
+rate_mean <- abs( ln( 650 / 2.0 ) / psi.rootAge() )
+
+# speciation and extinction rates for each of the 4 states
+# drawn from log normal distributions
+for (i in 1:4) {
+    
+    speciation[i] ~ dnLognormal(ln(rate_mean), 1)
+    moves[mvi++] = mvScale(speciation[i], lambda=2.0, weight=4)
+    moves[mvi++] = mvScale(speciation[i], lambda=0.5, weight=4)
+    moves[mvi++] = mvScale(speciation[i], lambda=0.01, weight=4)
+    
+    extinction[i] ~ dnLognormal(ln(rate_mean), 1)
+    moves[mvi++] = mvScale(extinction[i], lambda=2.0, weight=4)
+    moves[mvi++] = mvScale(extinction[i], lambda=0.5, weight=4)
+    moves[mvi++] = mvScale(extinction[i], lambda=0.01, weight=4)
+    
+    up_down_scale_mv[i] = mvUpDownScale(lambda=0.5, weight=8)
+    up_down_scale_mv[i].addVariable( speciation[i], TRUE )
+    up_down_scale_mv[i].addVariable( extinction[i], TRUE )
+    moves[mvi++] = up_down_scale_mv[i]
+    
+    up_down_scale_mv2[i] = mvUpDownScale(lambda=2.0, weight=8)
+    up_down_scale_mv2[i].addVariable( speciation[i], TRUE )
+    up_down_scale_mv2[i].addVariable( extinction[i], TRUE )
+    moves[mvi++] = up_down_scale_mv2[i]
+
+}
+
+
+diversification := speciation - extinction
+
+# rate_matrix = [0A, 1A, 0B, 1B]
+divers_0A := diversification[1]
+divers_1A := diversification[2]
+divers_0B := diversification[3]
+divers_1B := diversification[4]
+
+# transition rates among states
+num_events ~ dnExponential(1/20)
+moves[mvi++] = mvScale(num_events, lambda=20, weight=3)
+moves[mvi++] = mvScale(num_events, lambda=2, weight=3)
+rate_pr := psi.treeLength() / num_events
+
+# between observed states
+rate_01 <- 0.0 # no secondary gain of incompatibility
+rate_10 ~ dnExponential( rate_pr )
+Q := [rate_01, rate_10]
+
+# between hidden states
+rate_AB ~ dnExponential( rate_pr )
+rate_BA ~ dnExponential( rate_pr )
+R := [rate_AB, rate_BA]
+
+# the rate matrix for the combined observed and hidden states 
+rate_matrix := fnHiddenStateRateMatrix(Q, R, rescaled=false)
+    
+moves[mvi++] = mvScale(rate_10, lambda=1.0, weight=4)
+moves[mvi++] = mvScale(rate_AB, lambda=1.0, weight=4)
+moves[mvi++] = mvScale(rate_BA, lambda=1.0, weight=4)
+
+moves[mvi++] = mvScale(rate_10, lambda=0.1, weight=4)
+moves[mvi++] = mvScale(rate_AB, lambda=0.1, weight=4)
+moves[mvi++] = mvScale(rate_BA, lambda=0.1, weight=4)
+
+
+# root state frequencies 
+root_states <- simplex( [0,1,0,1] ) # condition on starting in 1A or 1B
+
+
+# rho is the probability of sampling species at the present
+rho <- psi.ntips()/650
+
+# character dependent birth death process
+timetree ~ dnCDBDP( rootAge           = psi.rootAge(),
+                    speciationRates   = speciation,
+                    extinctionRates   = extinction, 
+                    Q                 = rate_matrix, 
+                    delta             = 1.0,
+                    pi                = root_states,
+                    rho               = rho,
+                    condition         = "survival",
+                    taxa              = taxa )
+
+#clamp the model with the observed tree and data
+timetree.clamp( psi )
+timetree.clampCharData( data_exp )
+
+
+#############
+# The Model #
+#############
+
+
+### workspace model wrapper ###
+mymodel = model(timetree)
+
+# monitors
+monitors[mni++] = mnScreen(printgen=sample_freq, num_events, diversification)
+
+# calculate marginal likelihood
+pow_p = powerPosterior(mymodel, moves, monitors, base_dir + "output/dependent" + rep + ".out", cats=50)
+pow_p.burnin(generations=100, tuningInterval=10)
+pow_p.run(generations=100)
+ss = steppingStoneSampler(file=base_dir + "output/dependent" + rep + ".out", powerColumnName="power", likelihoodColumnName="likelihood")
+ss.marginal()
+write(ss.marginal(), filename=base_dir + "bf_dependent.tsv", append=TRUE, separator="\t")
+q()
+
