@@ -2,7 +2,7 @@
 
 This repo contains the data and scripts used to perform the analyses described in:
 
-> Freyman, W.A. and S. Höhna. 2017. Stochastic character mapping of state-dependent diversification reveals the tempo of evolutionary decline in self-compatible lineages. *bioRxiv* 210484 [[link](https://www.biorxiv.org/content/early/2018/01/05/210484)]
+> Freyman, W.A. and S. Höhna. 2018. Stochastic character mapping of state-dependent diversification reveals the tempo of evolutionary decline in self-compatible lineages. *bioRxiv* 210484 [[link](https://www.biorxiv.org/content/early/2018/06/22/210484)]
 
 Directory structure:
 
